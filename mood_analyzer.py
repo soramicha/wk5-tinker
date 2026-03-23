@@ -9,9 +9,34 @@ This class starts with very simple logic:
   - Convert that score into a mood label
 """
 
-from typing import List, Dict, Tuple, Optional
+import re
+from typing import List, Dict, Optional
 
 from dataset import POSITIVE_WORDS, NEGATIVE_WORDS
+
+# Emojis and text emoticons → sentinel tokens inserted before tokenizing.
+# Sentinel tokens survive punctuation-stripping and are checked in score_text.
+_EMOJI_MAP: Dict[str, str] = {
+    "😊": "emoji_positive",
+    "✨": "emoji_positive",
+    "🎵": "emoji_positive",
+    "😂": "emoji_positive",
+    "🔥": "emoji_positive",   # fire = hype / strong positive in slang context
+    ":)":  "emoji_positive",
+    ":-)": "emoji_positive",
+    "💀": "emoji_negative",   # used as "I'm dead 💀" / chaos signal
+    "😭": "emoji_negative",
+    "🙃": "emoji_negative",   # upside-down = sarcastic / done
+    ":(":  "emoji_negative",
+    ":-(": "emoji_negative",
+}
+
+# Words that flip the sentiment of the next sentiment word.
+_NEGATION_WORDS = frozenset({
+    "not", "never", "no", "don't", "dont",
+    "doesn't", "doesnt", "can't", "cant",
+    "won't", "wont", "barely", "hardly",
+})
 
 
 class MoodAnalyzer:
@@ -40,20 +65,33 @@ class MoodAnalyzer:
         """
         Convert raw text into a list of tokens the model can work with.
 
-        TODO: Improve this method.
-
-        Right now, it does the minimum:
-          - Strips leading and trailing whitespace
-          - Converts everything to lowercase
-          - Splits on spaces
-
-        Ideas to improve:
-          - Remove punctuation
-          - Handle simple emojis separately (":)", ":-(", "🥲", "😂")
-          - Normalize repeated characters ("soooo" -> "soo")
+        Steps:
+          1. Replace emojis / text emoticons with sentinel tokens so they
+             survive punctuation-stripping and carry sentiment signal.
+          2. Lowercase everything.
+          3. Split on whitespace.
+          4. Strip leading / trailing punctuation from each token so
+             "tired," matches "tired" and "love!" matches "love".
         """
-        cleaned = text.strip().lower()
-        tokens = cleaned.split()
+        # Step 1 — swap emojis for sentinel tokens before any other change.
+        for symbol, sentinel in _EMOJI_MAP.items():
+            text = text.replace(symbol, f" {sentinel} ")
+
+        # Step 2 — lowercase.
+        text = text.lower()
+
+        # Step 3 — split.
+        raw_tokens = text.split()
+
+        # Step 4 — strip surrounding punctuation, but leave sentinel tokens alone.
+        tokens: List[str] = []
+        for tok in raw_tokens:
+            if tok.startswith("emoji_"):
+                tokens.append(tok)
+            else:
+                cleaned = re.sub(r"^[^\w]+|[^\w]+$", "", tok)
+                if cleaned:
+                    tokens.append(cleaned)
 
         return tokens
 
@@ -65,25 +103,45 @@ class MoodAnalyzer:
         """
         Compute a numeric "mood score" for the given text.
 
-        Positive words increase the score.
-        Negative words decrease the score.
+        Base rule:
+          - Positive word / emoji_positive → +1
+          - Negative word / emoji_negative → -1
 
-        TODO: You must choose AT LEAST ONE modeling improvement to implement.
-        For example:
-          - Handle simple negation such as "not happy" or "not bad"
-          - Count how many times each word appears instead of just presence
-          - Give some words higher weights than others (for example "hate" < "annoyed")
-          - Treat emojis or slang (":)", "lol", "💀") as strong signals
+        Enhancement — negation handling:
+          When a negation word ("not", "never", "can't", …) appears, the
+          *next* sentiment word has its delta flipped.  This lets the model
+          score "not happy" as -1 instead of +1.
         """
-        # TODO: Implement this method.
-        #   1. Call self.preprocess(text) to get tokens.
-        #   2. Loop over the tokens.
-        #   3. Increase the score for positive words, decrease for negative words.
-        #   4. Return the total score.
-        #
-        # Hint: if you implement negation, you may want to look at pairs of tokens,
-        # like ("not", "happy") or ("never", "fun").
-        pass
+        tokens = self.preprocess(text)
+        score = 0
+        negated = False
+        negation_budget = 0  # how many more tokens the negation can travel
+
+        for token in tokens:
+            if token in _NEGATION_WORDS:
+                negated = True
+                negation_budget = 2  # only flip the next sentiment word within 2 tokens
+                continue
+
+            if negated:
+                negation_budget -= 1
+                if negation_budget < 0:
+                    negated = False  # negation expired without hitting a sentiment word
+
+            if token in self.positive_words or token == "emoji_positive":
+                delta = 1
+            elif token in self.negative_words or token == "emoji_negative":
+                delta = -1
+            else:
+                continue
+
+            if negated:
+                delta = -delta
+                negated = False
+
+            score += delta
+
+        return score
 
     # ---------------------------------------------------------------------
     # Label prediction
@@ -93,24 +151,29 @@ class MoodAnalyzer:
         """
         Turn the numeric score for a piece of text into a mood label.
 
-        The default mapping is:
-          - score > 0  -> "positive"
-          - score < 0  -> "negative"
-          - score == 0 -> "neutral"
+        Mapping:
+          - Both positive AND negative hits present, |score| <= 1 → "mixed"
+          - score > 0  → "positive"
+          - score < 0  → "negative"
+          - score == 0 → "neutral"
 
-        TODO: You can adjust this mapping if it makes sense for your model.
-        For example:
-          - Use different thresholds (for example score >= 2 to be "positive")
-          - Add a "mixed" label for scores close to zero
-        Just remember that whatever labels you return should match the labels
-        you use in TRUE_LABELS in dataset.py if you care about accuracy.
+        The "mixed" check fires before the sign check so that a post like
+        "tired but hopeful" (score = 0) gets "mixed" rather than "neutral"
+        when both signal types fired.
         """
-        # TODO: Implement this method.
-        #   1. Call self.score_text(text) to get the numeric score.
-        #   2. Return "positive" if the score is above 0.
-        #   3. Return "negative" if the score is below 0.
-        #   4. Return "neutral" otherwise.
-        pass
+        tokens = self.preprocess(text)
+        score = self.score_text(text)
+
+        pos_hits = sum(1 for t in tokens if t in self.positive_words or t == "emoji_positive")
+        neg_hits = sum(1 for t in tokens if t in self.negative_words or t == "emoji_negative")
+
+        if pos_hits > 0 and neg_hits > 0 and abs(score) <= 1:
+            return "mixed"
+        if score > 0:
+            return "positive"
+        if score < 0:
+            return "negative"
+        return "neutral"
 
     # ---------------------------------------------------------------------
     # Explanations (optional but recommended)
@@ -151,3 +214,34 @@ class MoodAnalyzer:
             f"(positive: {positive_hits or '[]'}, "
             f"negative: {negative_hits or '[]'})"
         )
+
+
+# ---------------------------------------------------------------------
+# Quick smoke-test — run with: python mood_analyzer.py
+# ---------------------------------------------------------------------
+
+if __name__ == "__main__":
+    analyzer = MoodAnalyzer()
+
+    test_cases = [
+        # text                                          expected
+        ("I love this class so much",                  "positive"),
+        ("Today was a terrible day",                   "negative"),
+        ("Feeling tired but kind of hopeful",          "mixed"),
+        ("This is fine",                               "neutral"),
+        ("I am not happy about this",                  "negative"),   # negation
+        ("lowkey obsessed with this song rn 🎵",       "positive"),   # emoji
+        ("I absolutely love when my wifi cuts out 🙃", "mixed"),      # sarcasm / emoji
+        ("exhausted but we actually pulled it off",    "mixed"),
+    ]
+
+    print(f"{'TEXT':<48} {'TOKENS'}")
+    print("-" * 90)
+    for text, expected in test_cases:
+        tokens = analyzer.preprocess(text)
+        score  = analyzer.score_text(text)
+        label  = analyzer.predict_label(text)
+        match  = "✓" if label == expected else f"✗ (expected {expected})"
+        print(f"{text:<48} tokens={tokens}")
+        print(f"  score={score:+d}  label={label}  {match}")
+        print()

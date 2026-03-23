@@ -23,6 +23,13 @@ POSITIVE_WORDS = [
     "chill",
     "relaxed",
     "amazing",
+    "hopeful",
+    "proud",
+    "peace",
+    "obsessed",
+    "sick",    # slang: "that's sick" = impressive/great (tradeoff: "I feel sick" would score positive)
+    "fire",    # slang: "that's fire" = excellent
+    "wicked",  # slang: "wicked fun" = very / intensely good
 ]
 
 NEGATIVE_WORDS = [
@@ -36,6 +43,8 @@ NEGATIVE_WORDS = [
     "stressed",
     "hate",
     "boring",
+    "exhausted",
+    "chaos",
 ]
 
 # ---------------------------------------------------------------------
@@ -50,6 +59,15 @@ SAMPLE_POSTS = [
     "This is fine",
     "So excited for the weekend",
     "I am not happy about this",
+    # --- new posts ---
+    "lowkey obsessed with this song rn 🎵",
+    "woke up late, missed the bus, spilled coffee... it's giving chaos 💀",
+    "I absolutely love when my wifi cuts out mid-presentation 🙃",
+    "ngl today hit different, feeling really at peace ✨",
+    "exhausted but we actually pulled it off no cap",
+    "this week has been A LOT but somehow I'm still here lol",
+    "can't tell if I'm happy or just caffeinated",
+    "bro what even was today 💀",
 ]
 
 # Human labels for each post above.
@@ -65,6 +83,15 @@ TRUE_LABELS = [
     "neutral",   # "This is fine"
     "positive",  # "So excited for the weekend"
     "negative",  # "I am not happy about this"
+    # --- new labels ---
+    "positive",  # "lowkey obsessed with this song rn 🎵"
+    "negative",  # "woke up late, missed the bus, spilled coffee... it's giving chaos 💀"
+    "negative",  # "I absolutely love when my wifi cuts out mid-presentation 🙃" (sarcasm)
+    "positive",  # "ngl today hit different, feeling really at peace ✨"
+    "mixed",     # "exhausted but we actually pulled it off no cap"
+    "mixed",     # "this week has been A LOT but somehow I'm still here lol"
+    "mixed",     # "can't tell if I'm happy or just caffeinated"
+    "neutral",   # "bro what even was today 💀" (vague/ambiguous — edge case)
 ]
 
 # TODO: Add 5-10 more posts and labels.
